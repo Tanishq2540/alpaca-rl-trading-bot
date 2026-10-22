@@ -1,0 +1,7 @@
+streamlit
+pandas
+yfinance
+stable-baselines3
+gymnasium
+alpaca-py
+torch
