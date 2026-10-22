@@ -1,0 +1,30 @@
+name: Alpaca AI Trading Bot
+
+on:
+  schedule:
+    # Runs at 9:30 AM UTC, Monday through Friday
+    - cron: '30 9 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install stable-baselines3 gymnasium yfinance pandas alpaca-py
+
+      - name: Run live execution script
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+        run: |
+          python alpaca_live_bot.py
