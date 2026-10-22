@@ -1,6 +1,8 @@
 import argparse
+import csv
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import numpy as np
 from alpaca.trading.client import TradingClient
@@ -11,6 +13,23 @@ from stable_baselines3 import PPO
 from rl_trader import build_features, fetch_data
 
 ACTION_NAMES = {0: "HOLD", 1: "BUY", 2: "SELL"}
+HISTORY_PATH = Path(__file__).resolve().parent / "trade_history.csv"
+HISTORY_FIELDS = ["Timestamp", "Action", "Portfolio_Value"]
+
+
+def append_trade_history(action, portfolio_value, path=HISTORY_PATH):
+    row = {
+        "Timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "Action": action,
+        "Portfolio_Value": round(float(portfolio_value), 2),
+    }
+    write_header = not path.exists() or path.stat().st_size == 0
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=HISTORY_FIELDS)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+    return row
 
 
 def get_credentials():
@@ -101,39 +120,63 @@ def main():
     print(f"Position: {held_qty:g} shares")
     print(f"Model action: {ACTION_NAMES[action]} ({action})")
 
+    executed_action = "Hold"
+
     if action == 1 and held_qty == 0.0:
-        notional = round(min(float(account.cash), float(account.buying_power)) * 0.99, 2)
-        if notional < 1.0:
-            print("Not enough buying power to open a position; nothing to do.")
-            return
-        print(f"Signal: BUY ${notional:,.2f} of {args.symbol}")
-        if args.dry_run:
-            print("Dry run: order not submitted.")
-            return
-        if not clock.is_open and not args.force:
-            print("Market is closed; skipping order. Use --force to queue it.")
-            return
-        order = client.submit_order(
-            MarketOrderRequest(
-                symbol=args.symbol,
-                notional=notional,
-                side=OrderSide.BUY,
-                time_in_force=TimeInForce.DAY,
-            )
+        notional = round(
+            min(float(account.cash), float(account.buying_power)) * 0.99, 2
         )
-        print(f"Submitted BUY order: id={order.id} status={order.status}")
+        if notional < 1.0:
+            print("Not enough buying power to open a position; holding.")
+        else:
+            print(f"Signal: BUY ${notional:,.2f} of {args.symbol}")
+            if args.dry_run:
+                print("Dry run: order not submitted.")
+            elif not clock.is_open and not args.force:
+                print("Market is closed; skipping order. Use --force to queue it.")
+            else:
+                order = client.submit_order(
+                    MarketOrderRequest(
+                        symbol=args.symbol,
+                        notional=notional,
+                        side=OrderSide.BUY,
+                        time_in_force=TimeInForce.DAY,
+                    )
+                )
+                executed_action = "Buy"
+                print(f"Submitted BUY order: id={order.id} status={order.status}")
     elif action == 2 and held_qty > 0.0:
         print(f"Signal: SELL {held_qty:g} shares of {args.symbol}")
         if args.dry_run:
             print("Dry run: order not submitted.")
-            return
-        if not clock.is_open and not args.force:
+        elif not clock.is_open and not args.force:
             print("Market is closed; skipping order. Use --force to queue it.")
-            return
-        order = client.close_position(args.symbol)
-        print(f"Submitted SELL/close order: id={order.id} status={order.status}")
+        else:
+            order = client.close_position(args.symbol)
+            executed_action = "Sell"
+            print(f"Submitted SELL/close order: id={order.id} status={order.status}")
     else:
         print("Signal: HOLD; no order needed.")
+
+    if args.dry_run:
+        print("Dry run: trade history was not updated.")
+        return
+
+    try:
+        refreshed_account = client.get_account()
+        portfolio_value = float(refreshed_account.portfolio_value)
+    except Exception as exc:
+        print(f"Could not refresh account ({exc}); using the last known value.")
+        portfolio_value = float(account.portfolio_value)
+
+    try:
+        append_trade_history(executed_action, portfolio_value)
+        print(
+            f"Appended {executed_action} to {HISTORY_PATH.name} "
+            f"(portfolio value ${portfolio_value:,.2f})."
+        )
+    except OSError as exc:
+        print(f"Warning: could not write {HISTORY_PATH.name}: {exc}")
 
 
 if __name__ == "__main__":

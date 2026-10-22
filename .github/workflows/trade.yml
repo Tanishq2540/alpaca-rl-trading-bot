@@ -9,6 +9,8 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,3 +30,19 @@ jobs:
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
         run: |
           python alpaca_live_bot.py
+
+      - name: Commit daily trade history
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ ! -f trade_history.csv ]; then
+            echo "trade_history.csv was not created; nothing to commit."
+            exit 0
+          fi
+          git add trade_history.csv
+          if git diff --cached --quiet; then
+            echo "No trade history changes to commit."
+            exit 0
+          fi
+          git commit -m "Auto-update daily trade history [skip ci]"
+          git push
